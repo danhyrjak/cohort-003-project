@@ -28,6 +28,13 @@ export enum TeamMemberRole {
   Member = "member",
 }
 
+export enum CommentStatus {
+  Pending = "pending",
+  Approved = "approved",
+  Reported = "reported",
+  Declined = "declined",
+}
+
 // ─── Tables ───
 
 export const users = sqliteTable("users", {
@@ -252,6 +259,30 @@ export const coupons = sqliteTable("coupons", {
   redeemedByUserId: integer("redeemed_by_user_id").references(() => users.id),
   redeemedAt: text("redeemed_at"),
   createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+export const lessonComments = sqliteTable("lesson_comments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  lessonId: integer("lesson_id")
+    .notNull()
+    .references(() => lessons.id),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  parentId: integer("parent_id"), // self-reference for instructor replies
+  body: text("body").notNull(),
+  status: text("status")
+    .notNull()
+    .$type<CommentStatus>()
+    .default(CommentStatus.Pending),
+  reportReason: text("report_reason"),
+  adminReason: text("admin_reason"),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
 });

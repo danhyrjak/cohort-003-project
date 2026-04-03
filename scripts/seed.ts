@@ -45,6 +45,7 @@ async function seed() {
 
   // Drop and recreate tables for a clean seed
   sqlite.exec(`
+    PRAGMA foreign_keys = OFF;
     DROP TABLE IF EXISTS video_watch_events;
     DROP TABLE IF EXISTS quiz_answers;
     DROP TABLE IF EXISTS quiz_attempts;
@@ -52,6 +53,7 @@ async function seed() {
     DROP TABLE IF EXISTS quiz_questions;
     DROP TABLE IF EXISTS quizzes;
     DROP TABLE IF EXISTS lesson_progress;
+    DROP TABLE IF EXISTS lesson_comments;
     DROP TABLE IF EXISTS course_ratings;
     DROP TABLE IF EXISTS coupons;
     DROP TABLE IF EXISTS team_members;
@@ -64,6 +66,7 @@ async function seed() {
     DROP TABLE IF EXISTS categories;
     DROP TABLE IF EXISTS users;
     DROP TABLE IF EXISTS __drizzle_migrations;
+    PRAGMA foreign_keys = ON;
   `);
 
   // Create tables using the same Drizzle migrations as the live database

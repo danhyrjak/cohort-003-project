@@ -34,6 +34,13 @@ import {
   moveLessonToModule,
 } from "~/services/lessonService";
 import { getEnrollmentCountForCourse, getCourseEnrolledStudents } from "~/services/enrollmentService";
+import {
+  getPendingCommentsForCourse,
+  getCommentById,
+  approveComment,
+  reportComment,
+} from "~/services/commentService";
+import type { PendingCommentsByLesson } from "~/services/commentService";
 import { calculateProgress } from "~/services/progressService";
 import { getQuizByLessonId, getBestAttempt } from "~/services/quizService";
 import { getCurrentUserId } from "~/lib/session";
@@ -42,6 +49,7 @@ import { CourseStatus, UserRole } from "~/db/schema";
 import { formatDuration, formatPrice } from "~/lib/utils";
 import { MonacoMarkdownEditor } from "~/components/monaco-markdown-editor";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
+import { UserAvatar } from "~/components/user-avatar";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
@@ -59,6 +67,7 @@ import {
   Eye,
   FileEdit,
   GripVertical,
+  MessageCircle,
   Pencil,
   Plus,
   Save,
@@ -94,6 +103,8 @@ const courseEditorActionSchema = z.discriminatedUnion("intent", [
   z.object({ intent: z.literal("move-lesson"), lessonId: z.coerce.number().int(), targetModuleId: z.coerce.number().int(), targetPosition: z.coerce.number().int() }),
   z.object({ intent: z.literal("delete-lesson"), lessonId: z.coerce.number().int() }),
   z.object({ intent: z.literal("update-sales-copy"), salesCopy: z.string().optional() }),
+  z.object({ intent: z.literal("approve-comment"), commentId: z.coerce.number().int() }),
+  z.object({ intent: z.literal("report-comment"), commentId: z.coerce.number().int(), reason: z.string().trim().min(1, "A reason is required when reporting a comment.") }),
 ]);
 
 export function meta({ data: loaderData }: Route.MetaArgs) {
@@ -184,8 +195,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   });
 
   const quizCount = lessonQuizzes.length;
+  const pendingComments = getPendingCommentsForCourse(courseId);
 
-  return { course, lessonCount, enrollmentCount, students, quizCount };
+  return { course, lessonCount, enrollmentCount, students, quizCount, pendingComments };
 }
 
 export async function action({ params, request }: Route.ActionArgs) {
@@ -355,6 +367,20 @@ export async function action({ params, request }: Route.ActionArgs) {
   if (intent === "update-sales-copy") {
     updateCourseSalesCopy(courseId, parsed.data.salesCopy || null);
     return { success: true, field: "sales-copy" };
+  }
+
+  if (intent === "approve-comment") {
+    const comment = getCommentById(parsed.data.commentId);
+    if (!comment) throw data("Comment not found.", { status: 404 });
+    approveComment(parsed.data.commentId);
+    return { success: true };
+  }
+
+  if (intent === "report-comment") {
+    const comment = getCommentById(parsed.data.commentId);
+    if (!comment) throw data("Comment not found.", { status: 404 });
+    reportComment(parsed.data.commentId, parsed.data.reason);
+    return { success: true };
   }
 
   throw data("Invalid action.", { status: 400 });
@@ -984,7 +1010,7 @@ function statusBadgeColor(status: string) {
 export default function InstructorCourseEditor({
   loaderData,
 }: Route.ComponentProps) {
-  const { course, lessonCount, enrollmentCount, students, quizCount } = loaderData;
+  const { course, lessonCount, enrollmentCount, students, quizCount, pendingComments } = loaderData;
   const statusFetcher = useFetcher();
   const reorderFetcher = useFetcher();
   const lessonReorderFetcher = useFetcher();
@@ -1192,6 +1218,15 @@ export default function InstructorCourseEditor({
           <TabsTrigger value="students">
             <Users className="size-4" />
             Students
+          </TabsTrigger>
+          <TabsTrigger value="comments">
+            <MessageCircle className="size-4" />
+            Review Comments
+            {pendingComments.reduce((sum, m) => sum + m.lessons.reduce((s, l) => s + l.comments.length, 0), 0) > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-medium text-white leading-none">
+                {pendingComments.reduce((sum, m) => sum + m.lessons.reduce((s, l) => s + l.comments.length, 0), 0)}
+              </span>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -1652,7 +1687,175 @@ export default function InstructorCourseEditor({
             </Card>
           )}
         </TabsContent>
+
+        {/* Comments to Review Tab */}
+        <TabsContent value="comments" className="mt-6">
+          <PendingCommentsTab
+            pendingComments={pendingComments}
+            courseId={course.id}
+          />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function PendingCommentsTab({
+  pendingComments,
+  courseId,
+}: {
+  pendingComments: PendingCommentsByLesson;
+  courseId: number;
+}) {
+  const totalPending = pendingComments.reduce(
+    (sum, m) => sum + m.lessons.reduce((s, l) => s + l.comments.length, 0),
+    0
+  );
+
+  if (totalPending === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">
+          <MessageCircle className="mx-auto mb-3 size-8 opacity-40" />
+          <p>No comments awaiting review.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        {totalPending} comment{totalPending !== 1 ? "s" : ""} awaiting approval
+      </p>
+      {pendingComments.map((mod) => (
+        <div key={mod.moduleId}>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            {mod.moduleTitle}
+          </h3>
+          <div className="space-y-4">
+            {mod.lessons.map((lesson) => (
+              <Card key={lesson.lessonId}>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium">{lesson.lessonTitle}</h4>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="divide-y">
+                    {lesson.comments.map((comment) => (
+                      <PendingCommentRow
+                        key={comment.id}
+                        comment={comment}
+                      />
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PendingCommentRow({
+  comment,
+}: {
+  comment: PendingCommentsByLesson[number]["lessons"][number]["comments"][number];
+}) {
+  const fetcher = useFetcher({ key: `approve-overview-${comment.id}` });
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.success) {
+      setShowReportForm(false);
+      setReportReason("");
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  return (
+    <div className="py-3 first:pt-0 last:pb-0">
+      <div className="flex items-start gap-3">
+        <UserAvatar
+          name={comment.authorName}
+          avatarUrl={comment.authorAvatarUrl}
+          className="mt-0.5 size-7 shrink-0"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <span className="text-sm font-medium">{comment.authorName}</span>
+            <span className="text-xs text-muted-foreground">
+              {new Date(comment.createdAt).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          </div>
+          <p className="text-sm text-foreground mb-2">{comment.body}</p>
+
+          {showReportForm ? (
+            <fetcher.Form method="post" className="space-y-2">
+              <input type="hidden" name="intent" value="report-comment" />
+              <input type="hidden" name="commentId" value={comment.id} />
+              <textarea
+                name="reason"
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                placeholder="Reason for reporting (required)"
+                rows={2}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <div className="flex gap-2">
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="destructive"
+                  disabled={!reportReason.trim() || fetcher.state !== "idle"}
+                >
+                  {fetcher.state !== "idle" ? "Reporting..." : "Confirm Report"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { setShowReportForm(false); setReportReason(""); }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </fetcher.Form>
+          ) : (
+            <div className="flex gap-2">
+              <fetcher.Form method="post">
+                <input type="hidden" name="intent" value="approve-comment" />
+                <input type="hidden" name="commentId" value={comment.id} />
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-800 dark:hover:bg-green-950"
+                  disabled={fetcher.state !== "idle"}
+                >
+                  Approve
+                </Button>
+              </fetcher.Form>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950"
+                onClick={() => setShowReportForm(true)}
+              >
+                Report
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

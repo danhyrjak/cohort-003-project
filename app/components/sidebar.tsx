@@ -7,6 +7,7 @@ import {
   BookOpen,
   LayoutDashboard,
   GraduationCap,
+  MessageCircle,
   Shield,
   Tag,
   Users,
@@ -82,6 +83,12 @@ const navItems: NavItem[] = [
     label: "Categories",
     to: "/admin/categories",
     icon: <Tag className="size-4" />,
+    roles: [UserRole.Admin],
+  },
+  {
+    label: "Reported Comments",
+    to: "/admin/comments",
+    icon: <MessageCircle className="size-4" />,
     roles: [UserRole.Admin],
   },
 ];

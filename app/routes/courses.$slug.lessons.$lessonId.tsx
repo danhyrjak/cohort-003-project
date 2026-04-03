@@ -26,7 +26,17 @@ import {
   getBestAttempt,
 } from "~/services/quizService";
 import { computeResult } from "~/services/quizScoringService";
-import { LessonProgressStatus } from "~/db/schema";
+import { LessonProgressStatus, CommentStatus } from "~/db/schema";
+import {
+  getVisibleCommentsForLesson,
+  createComment,
+  updateComment,
+  deleteComment,
+  getCommentById,
+} from "~/services/commentService";
+import type { VisibleComment } from "~/services/commentService";
+import { Textarea } from "~/components/ui/textarea";
+import { UserAvatar } from "~/components/user-avatar";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
 import {
@@ -40,6 +50,7 @@ import {
   Github,
   HelpCircle,
   MapPin,
+  MessageCircle,
   PlayCircle,
   ShieldAlert,
   XCircle,
@@ -203,6 +214,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const nextLesson =
     currentIndex < allLessons.length - 1 ? allLessons[currentIndex + 1] : null;
 
+  // Fetch comments visible to this user
+  const comments = enrolled
+    ? getVisibleCommentsForLesson(lessonId, currentUserId)
+    : getVisibleCommentsForLesson(lessonId, null);
+
   // Check for quiz attached to this lesson
   const quizRecord = getQuizByLessonId(lessonId);
   let quiz: {
@@ -281,6 +297,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     pppBlocked,
     pppBlockedCountry,
     pppPurchaseCountry,
+    comments,
   };
 }
 
@@ -303,6 +320,54 @@ export async function action({ params, request }: Route.ActionArgs) {
   if (intent === "mark-complete") {
     markLessonComplete(currentUserId, lessonId);
     return { success: true };
+  }
+
+  if (intent === "post-comment") {
+    const body = String(formData.get("body") ?? "").trim();
+    if (!body || body.length > 2000) {
+      return data(
+        { commentError: "Comment must be between 1 and 2000 characters." },
+        { status: 400 }
+      );
+    }
+    if (!isUserEnrolled(currentUserId, course.id)) {
+      throw data("You must be enrolled to comment.", { status: 403 });
+    }
+    createComment(currentUserId, lessonId, body);
+    return { commentSuccess: true };
+  }
+
+  if (intent === "edit-comment") {
+    const commentId = Number(formData.get("commentId"));
+    const body = String(formData.get("body") ?? "").trim();
+    if (isNaN(commentId)) {
+      return data({ commentError: "Invalid comment." }, { status: 400 });
+    }
+    const comment = getCommentById(commentId);
+    if (!comment || comment.userId !== currentUserId || comment.lessonId !== lessonId) {
+      throw data("Comment not found.", { status: 404 });
+    }
+    if (comment.status !== "pending") {
+      throw data("Only pending comments can be edited.", { status: 403 });
+    }
+    updateComment(commentId, body);
+    return { editSuccess: true };
+  }
+
+  if (intent === "delete-comment") {
+    const commentId = Number(formData.get("commentId"));
+    if (isNaN(commentId)) {
+      return data({ commentError: "Invalid comment." }, { status: 400 });
+    }
+    const comment = getCommentById(commentId);
+    if (!comment || comment.userId !== currentUserId || comment.lessonId !== lessonId) {
+      throw data("Comment not found.", { status: 404 });
+    }
+    if (comment.status === "reported") {
+      throw data("Reported comments cannot be deleted.", { status: 403 });
+    }
+    deleteComment(commentId);
+    return { deleteSuccess: true };
   }
 
   if (intent === "submit-quiz") {
@@ -382,6 +447,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     pppBlocked,
     pppBlockedCountry,
     pppPurchaseCountry,
+    comments,
   } = loaderData;
   const [autoplay, toggleAutoplay] = useAutoplay();
   const fetcher = useFetcher({ key: `mark-complete-${lesson.id}` });
@@ -545,6 +611,14 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
               isSubmitting={isSubmittingQuiz}
             />
           )}
+
+          {/* Comments */}
+          <CommentSection
+            comments={comments}
+            currentUserId={currentUserId}
+            enrolled={enrolled}
+            lessonId={lesson.id}
+          />
 
           {/* Mark Complete / Up Next */}
           {enrolled && currentUserId && (
@@ -1011,6 +1085,299 @@ function QuizSection({
         </quizFetcher.Form>
       </CardContent>
     </Card>
+  );
+}
+
+function CommentSection({
+  comments,
+  currentUserId,
+  enrolled,
+  lessonId,
+}: {
+  comments: VisibleComment[];
+  currentUserId: number | null;
+  enrolled: boolean;
+  lessonId: number;
+}) {
+  const postFetcher = useFetcher({ key: `post-comment-${lessonId}` });
+  const editFetcher = useFetcher({ key: `edit-comment-${lessonId}` });
+  const deleteFetcher = useFetcher({ key: `delete-comment-${lessonId}` });
+
+  const [body, setBody] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editBody, setEditBody] = useState("");
+
+  useEffect(() => {
+    if (postFetcher.data?.commentSuccess) {
+      setBody("");
+    }
+  }, [postFetcher.data]);
+
+  useEffect(() => {
+    if (editFetcher.data?.editSuccess) {
+      setEditingId(null);
+      setEditBody("");
+    }
+  }, [editFetcher.data]);
+
+  function startEdit(comment: VisibleComment) {
+    setEditingId(comment.id);
+    setEditBody(comment.body);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditBody("");
+  }
+
+  const postError = postFetcher.data?.commentError as string | undefined;
+
+  return (
+    <div className="mb-8">
+      <div className="mb-4 flex items-center gap-2">
+        <MessageCircle className="size-5 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">
+          Comments
+          {comments.length > 0 && (
+            <span className="ml-2 text-base font-normal text-muted-foreground">
+              ({comments.length})
+            </span>
+          )}
+        </h2>
+      </div>
+
+      {/* Comment list */}
+      {comments.length === 0 && (
+        <p className="mb-6 text-sm text-muted-foreground">
+          No comments yet.{enrolled ? " Be the first to comment!" : ""}
+        </p>
+      )}
+
+      <div className="space-y-6">
+        {comments.map((comment) => (
+          <div key={comment.id} className="space-y-3">
+            {/* Top-level comment */}
+            <div
+              className={cn(
+                "rounded-lg border p-4",
+                comment.status === CommentStatus.Declined &&
+                  comment.isOwn &&
+                  "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                <UserAvatar
+                  name={comment.authorName}
+                  avatarUrl={comment.authorAvatarUrl}
+                  className="mt-0.5 size-8 shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <span className="text-sm font-medium">
+                      {comment.authorName}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(comment.createdAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                    {comment.isOwn &&
+                      comment.status === CommentStatus.Pending && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                          Awaiting approval
+                        </span>
+                      )}
+                    {comment.isOwn &&
+                      comment.status === CommentStatus.Reported && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                          Under review
+                        </span>
+                      )}
+                    {comment.isOwn &&
+                      comment.status === CommentStatus.Declined && (
+                        <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                          Declined
+                        </span>
+                      )}
+                  </div>
+
+                  {editingId === comment.id ? (
+                    <editFetcher.Form method="post" className="space-y-2">
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="edit-comment"
+                      />
+                      <input
+                        type="hidden"
+                        name="commentId"
+                        value={comment.id}
+                      />
+                      <Textarea
+                        name="body"
+                        value={editBody}
+                        onChange={(e) => setEditBody(e.target.value)}
+                        rows={3}
+                        className="text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={
+                            !editBody.trim() ||
+                            editFetcher.state !== "idle"
+                          }
+                        >
+                          {editFetcher.state !== "idle"
+                            ? "Saving..."
+                            : "Save"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={cancelEdit}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </editFetcher.Form>
+                  ) : (
+                    <p className="text-sm text-foreground">{comment.body}</p>
+                  )}
+
+                  {comment.isOwn &&
+                    comment.status === CommentStatus.Declined &&
+                    comment.adminReason && (
+                      <p className="mt-1 text-xs italic text-muted-foreground">
+                        Admin note: {comment.adminReason}
+                      </p>
+                    )}
+
+                  {/* Own comment actions */}
+                  {comment.isOwn && editingId !== comment.id && (
+                    <div className="mt-2 flex gap-2">
+                      {comment.status === CommentStatus.Pending && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => startEdit(comment)}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                      {comment.status !== CommentStatus.Reported && (
+                        <deleteFetcher.Form method="post">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="delete-comment"
+                          />
+                          <input
+                            type="hidden"
+                            name="commentId"
+                            value={comment.id}
+                          />
+                          <Button
+                            type="submit"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                            disabled={deleteFetcher.state !== "idle"}
+                          >
+                            Delete
+                          </Button>
+                        </deleteFetcher.Form>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Instructor replies */}
+            {comment.replies.length > 0 && (
+              <div className="ml-11 space-y-3">
+                {comment.replies.map((reply) => (
+                  <div
+                    key={reply.id}
+                    className="rounded-lg border border-primary/20 bg-primary/5 p-4"
+                  >
+                    <div className="flex items-start gap-3">
+                      <UserAvatar
+                        name={reply.authorName}
+                        avatarUrl={reply.authorAvatarUrl}
+                        className="mt-0.5 size-7 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className="text-sm font-medium">
+                            {reply.authorName}
+                          </span>
+                          <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                            Instructor
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(reply.createdAt).toLocaleDateString(
+                              "en-US",
+                              {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                              }
+                            )}
+                          </span>
+                        </div>
+                        <p className="text-sm text-foreground">{reply.body}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Post form */}
+      {enrolled && currentUserId && (
+        <div className="mt-6 rounded-lg border p-4">
+          <h3 className="mb-3 text-sm font-medium">Leave a comment</h3>
+          <postFetcher.Form method="post" className="space-y-3">
+            <input type="hidden" name="intent" value="post-comment" />
+            <Textarea
+              name="body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Ask a question or share your thoughts..."
+              rows={3}
+              className="text-sm"
+            />
+            {postError && (
+              <p className="text-sm text-destructive">{postError}</p>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!body.trim() || postFetcher.state !== "idle"}
+            >
+              {postFetcher.state !== "idle" ? "Posting..." : "Post Comment"}
+            </Button>
+          </postFetcher.Form>
+        </div>
+      )}
+
+      {!enrolled && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Enroll in this course to leave a comment.
+        </p>
+      )}
+    </div>
   );
 }
 
