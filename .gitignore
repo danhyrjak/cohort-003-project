@@ -13,3 +13,4 @@
 .pnpm-store
 *.db-shm
 .claude/settings.local.json
+_temp
