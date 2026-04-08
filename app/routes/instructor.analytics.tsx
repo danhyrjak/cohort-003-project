@@ -1,16 +1,29 @@
 import { Link } from "react-router";
 import { data, isRouteErrorResponse } from "react-router";
 import * as v from "valibot";
+import { useState, useEffect } from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import type { Route } from "./+types/instructor.analytics";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
 import { UserRole } from "~/db/schema";
 import {
   getAnalyticsSummary,
+  getRevenueTimeSeries,
+  getCourseBreakdown,
   type AnalyticsPeriod,
+  type CourseBreakdown,
 } from "~/services/analyticsService";
-import { cn } from "~/lib/utils";
-import { AlertTriangle, Star, TrendingUp, Users } from "lucide-react";
+import { cn, formatPrice } from "~/lib/utils";
+import { AlertTriangle, ArrowUpDown, ChevronDown, ChevronUp, Star, TrendingUp, Users } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -32,6 +45,11 @@ const PERIOD_LABELS: Record<AnalyticsPeriod, string> = {
   "12m": "12 Months",
   all: "All Time",
 };
+
+type SortKey = keyof Pick<
+  CourseBreakdown,
+  "revenue" | "salesCount" | "enrollmentCount" | "averageRating" | "listPrice"
+>;
 
 export function meta() {
   return [
@@ -57,14 +75,189 @@ export async function loader({ request }: Route.LoaderArgs) {
   const period = v.parse(periodSchema, url.searchParams.get("period") ?? undefined);
 
   const summary = getAnalyticsSummary(currentUserId, period);
+  const timeSeries = getRevenueTimeSeries(currentUserId, period);
+  const courseBreakdown = getCourseBreakdown(currentUserId, period);
 
-  return { summary, period };
+  return { summary, timeSeries, courseBreakdown, period };
 }
+
+// ─── Chart (client-only) ──────────────────────────────────────────────────────
+
+function useIsClient() {
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+  return isClient;
+}
+
+function RevenueChart({
+  data,
+  period,
+}: {
+  data: { date: string; revenue: number }[];
+  period: AnalyticsPeriod;
+}) {
+  const isClient = useIsClient();
+  const isMonthly = period === "12m" || period === "all";
+
+  if (!isClient) {
+    return (
+      <div className="h-64 animate-pulse rounded-lg bg-muted" />
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded-lg border border-dashed">
+        <p className="text-sm text-muted-foreground">No revenue data for this period.</p>
+      </div>
+    );
+  }
+
+  const formatted = data.map((d) => ({
+    ...d,
+    label: isMonthly
+      ? d.date.slice(0, 7) // YYYY-MM
+      : d.date.slice(5),   // MM-DD
+    revenueDisplay: d.revenue / 100,
+  }));
+
+  return (
+    <ResponsiveContainer width="100%" height={256}>
+      <LineChart data={formatted} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          interval="preserveStartEnd"
+        />
+        <YAxis
+          tickFormatter={(v) => `$${v}`}
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          width={50}
+        />
+        <Tooltip
+          formatter={(value) => [`$${Number(value).toFixed(2)}`, "Revenue"]}
+          labelFormatter={(label) => label}
+        />
+        <Line
+          type="monotone"
+          dataKey="revenueDisplay"
+          strokeWidth={2}
+          dot={false}
+          activeDot={{ r: 4 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── Sortable Table ───────────────────────────────────────────────────────────
+
+function CourseTable({ courses }: { courses: CourseBreakdown[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>("revenue");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  if (courses.length === 0) {
+    return (
+      <div className="flex h-32 items-center justify-center rounded-lg border border-dashed">
+        <p className="text-sm text-muted-foreground">No course data for this period.</p>
+      </div>
+    );
+  }
+
+  function handleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+
+  const sorted = [...courses].sort((a, b) => {
+    const aVal = a[sortKey] ?? -1;
+    const bVal = b[sortKey] ?? -1;
+    return sortDir === "asc" ? aVal - bVal : bVal - aVal;
+  });
+
+  function SortIcon({ col }: { col: SortKey }) {
+    if (sortKey !== col) return <ArrowUpDown className="ml-1 inline size-3 opacity-40" />;
+    return sortDir === "asc"
+      ? <ChevronUp className="ml-1 inline size-3" />
+      : <ChevronDown className="ml-1 inline size-3" />;
+  }
+
+  function SortHeader({
+    col,
+    children,
+    className,
+  }: {
+    col: SortKey;
+    children: React.ReactNode;
+    className?: string;
+  }) {
+    return (
+      <th
+        className={cn(
+          "cursor-pointer select-none whitespace-nowrap px-4 py-3 text-right text-xs font-medium text-muted-foreground hover:text-foreground",
+          className
+        )}
+        onClick={() => handleSort(col)}
+      >
+        {children}
+        <SortIcon col={col} />
+      </th>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border">
+      <table className="w-full text-sm">
+        <thead className="border-b bg-muted/50">
+          <tr>
+            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
+              Course
+            </th>
+            <SortHeader col="listPrice">List Price</SortHeader>
+            <SortHeader col="revenue">Revenue</SortHeader>
+            <SortHeader col="salesCount">Sales</SortHeader>
+            <SortHeader col="enrollmentCount">Enrollments</SortHeader>
+            <SortHeader col="averageRating">Avg Rating</SortHeader>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((course, i) => (
+            <tr key={course.courseId} className={cn("border-b last:border-0", i % 2 === 1 && "bg-muted/20")}>
+              <td className="px-4 py-3 font-medium">{course.title}</td>
+              <td className="px-4 py-3 text-right">{formatPrice(course.listPrice)}</td>
+              <td className="px-4 py-3 text-right">${(course.revenue / 100).toFixed(2)}</td>
+              <td className="px-4 py-3 text-right">{course.salesCount}</td>
+              <td className="px-4 py-3 text-right">{course.enrollmentCount}</td>
+              <td className="px-4 py-3 text-right">
+                {course.averageRating !== null
+                  ? `${course.averageRating.toFixed(1)} (${course.ratingCount})`
+                  : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InstructorAnalytics({
   loaderData,
 }: Route.ComponentProps) {
-  const { summary, period } = loaderData;
+  const { summary, timeSeries, courseBreakdown, period } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -102,7 +295,8 @@ export default function InstructorAnalytics({
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      {/* Summary Cards */}
+      <div className="mb-8 grid gap-4 sm:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -150,6 +344,22 @@ export default function InstructorAnalytics({
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Revenue Chart */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="text-base font-medium">Revenue Over Time</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RevenueChart data={timeSeries} period={period} />
+        </CardContent>
+      </Card>
+
+      {/* Per-Course Table */}
+      <div>
+        <h2 className="mb-4 text-lg font-semibold">Course Breakdown</h2>
+        <CourseTable courses={courseBreakdown} />
       </div>
     </div>
   );
