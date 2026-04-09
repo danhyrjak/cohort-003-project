@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { data, isRouteErrorResponse } from "react-router";
 import * as v from "valibot";
-import type { Route } from "./+types/instructor.analytics";
+import type { Route } from "./+types/admin.instructor.$instructorId.analytics";
 import { getCurrentUserId } from "~/lib/session";
 import { getUserById } from "~/services/userService";
 import { UserRole } from "~/db/schema";
@@ -22,40 +22,68 @@ const periodSchema = v.fallback(
   DEFAULT_PERIOD
 );
 
-export function meta() {
+const paramsSchema = v.object({
+  instructorId: v.pipe(v.string(), v.transform(Number), v.integer()),
+});
+
+export function meta({ data: loaderData }: Route.MetaArgs) {
+  const name = loaderData?.instructorName ?? "Instructor";
   return [
-    { title: "Analytics — Cadence" },
-    { name: "description", content: "Your revenue and enrollment analytics" },
+    { title: `${name}'s Analytics — Cadence` },
+    { name: "description", content: `Revenue and enrollment analytics for ${name}` },
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, params }: Route.LoaderArgs) {
   const currentUserId = await getCurrentUserId(request);
 
   if (!currentUserId) {
     throw data("Sign in to view analytics.", { status: 401 });
   }
 
-  const user = getUserById(currentUserId);
+  const currentUser = getUserById(currentUserId);
 
-  if (!user || user.role !== UserRole.Instructor) {
-    throw data("Only instructors can access analytics.", { status: 403 });
+  if (!currentUser || currentUser.role !== UserRole.Admin) {
+    throw data("Only admins can access this page.", { status: 403 });
+  }
+
+  const parsed = v.safeParse(paramsSchema, params);
+  if (!parsed.success) {
+    throw data("Invalid instructor ID.", { status: 400 });
+  }
+
+  const instructorId = parsed.output.instructorId;
+  const instructor = getUserById(instructorId);
+
+  if (!instructor) {
+    throw data("Instructor not found.", { status: 404 });
+  }
+
+  if (instructor.role !== UserRole.Instructor) {
+    throw data("This user is not an instructor.", { status: 400 });
   }
 
   const url = new URL(request.url);
   const period = v.parse(periodSchema, url.searchParams.get("period") ?? undefined);
 
-  const summary = getAnalyticsSummary(currentUserId, period);
-  const timeSeries = getRevenueTimeSeries(currentUserId, period);
-  const courseBreakdown = getCourseBreakdown(currentUserId, period);
+  const summary = getAnalyticsSummary(instructorId, period);
+  const timeSeries = getRevenueTimeSeries(instructorId, period);
+  const courseBreakdown = getCourseBreakdown(instructorId, period);
 
-  return { summary, timeSeries, courseBreakdown, period };
+  return {
+    summary,
+    timeSeries,
+    courseBreakdown,
+    period,
+    instructorName: instructor.name,
+    instructorId,
+  };
 }
 
-export default function InstructorAnalytics({
+export default function AdminInstructorAnalytics({
   loaderData,
 }: Route.ComponentProps) {
-  const { summary, timeSeries, courseBreakdown, period } = loaderData;
+  const { summary, timeSeries, courseBreakdown, period, instructorName } = loaderData;
 
   return (
     <AnalyticsDashboard
@@ -63,7 +91,8 @@ export default function InstructorAnalytics({
       timeSeries={timeSeries}
       courseBreakdown={courseBreakdown}
       period={period}
-      backLink={{ to: "/instructor", label: "My Courses" }}
+      instructorName={instructorName}
+      backLink={{ to: "/admin/users", label: "Manage Users" }}
     />
   );
 }
@@ -84,7 +113,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       message =
         typeof error.data === "string"
           ? error.data
-          : "You don't have permission to access this page.";
+          : "Only admins can access this page.";
+    } else if (error.status === 404) {
+      title = "Not found";
+      message =
+        typeof error.data === "string" ? error.data : "Instructor not found.";
     } else {
       title = `Error ${error.status}`;
       message =
@@ -98,9 +131,9 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         <AlertTriangle className="mx-auto mb-4 size-12 text-muted-foreground" />
         <h1 className="mb-2 text-2xl font-bold">{title}</h1>
         <p className="mb-6 text-muted-foreground">{message}</p>
-        <Link to="/instructor">
+        <Link to="/admin/users">
           <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
-            My Courses
+            Manage Users
           </button>
         </Link>
       </div>

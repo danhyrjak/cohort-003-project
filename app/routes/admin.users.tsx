@@ -298,14 +298,24 @@ function EditableUserRow({
             </Button>
           </div>
         ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-            onClick={() => setIsEditing(true)}
-          >
-            <Pencil className="size-3.5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {user.role === UserRole.Instructor && (
+              <Link
+                to={`/admin/instructor/${user.id}/analytics`}
+                className="inline-flex h-7 items-center rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                View Analytics
+              </Link>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+              onClick={() => setIsEditing(true)}
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          </div>
         )}
       </td>
     </tr>
