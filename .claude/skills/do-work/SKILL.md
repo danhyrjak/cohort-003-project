@@ -14,6 +14,7 @@ Complete one unit of work from start to commit, autonomously.
 If a plan file is provided or mentioned, read it and identify the next incomplete phase (first phase with unchecked acceptance criteria).
 
 If no plan exists, create one now:
+
 - Explore the codebase to understand current architecture and patterns
 - Ask the user to describe the unit of work if unclear
 - Invoke `/prd-to-plan` if a PRD is available, otherwise draft a short inline plan covering:
@@ -24,6 +25,7 @@ If no plan exists, create one now:
 ### 2. Implement
 
 Work through the acceptance criteria top-to-bottom. For each criterion:
+
 - Make the targeted change (prefer editing existing files over creating new ones)
 - Mark the criterion complete as you go
 - Keep changes minimal — do not refactor or clean up code outside the scope of the criterion
@@ -33,11 +35,12 @@ Work through the acceptance criteria top-to-bottom. For each criterion:
 Run both checks. Fix any errors before proceeding.
 
 ```bash
-pnpm type-check
+pnpm run typecheck
 pnpm run test
 ```
 
 If tests fail:
+
 - Read the failure output carefully
 - Fix the root cause (do not suppress or skip tests)
 - Re-run until clean
