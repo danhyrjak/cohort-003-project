@@ -23,10 +23,21 @@ If no plan exists, create one now:
 
 ### 2. Implement
 
-Work through the acceptance criteria top-to-bottom. For each criterion:
+**Frontend changes** — work through acceptance criteria top-to-bottom:
 - Make the targeted change (prefer editing existing files over creating new ones)
 - Mark the criterion complete as you go
 - Keep changes minimal — do not refactor or clean up code outside the scope of the criterion
+
+**Backend changes** — use red/green/refactor, one test at a time, within each vertical slice:
+
+For each acceptance criterion that touches backend code (routes, controllers, services, models, DB, API handlers):
+
+1. **Red** — write one failing test that captures the exact behavior this criterion requires. Run it and confirm it fails for the right reason.
+2. **Green** — write the minimum production code needed to make that test pass. Do not over-build.
+3. **Refactor** — clean up the implementation (naming, duplication, clarity) without changing behavior. Re-run the test to confirm it still passes.
+4. Repeat for the next criterion before moving on.
+
+Treat each acceptance criterion as a vertical slice: test + implementation + refactor, fully done, before starting the next. Mark each criterion complete only after its slice is clean.
 
 ### 3. Verify quality
 
