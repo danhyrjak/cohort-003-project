@@ -226,6 +226,72 @@ export function getRevenueTimeSeries(opts: {
   }));
 }
 
+// ─── Admin Platform-Wide Summary ───
+
+export interface AdminAnalyticsSummary {
+  totalRevenue: number;
+  totalEnrollments: number;
+  topEarningCourse: { title: string; revenue: number } | null;
+}
+
+export function getAdminAnalyticsSummary(opts: {
+  period: TimePeriod;
+}): AdminAnalyticsSummary {
+  const { period } = opts;
+  const startDate = getStartDate(period);
+
+  // Total revenue across all purchases
+  const revenueResult = db
+    .select({ total: sql<number>`coalesce(sum(${purchases.pricePaid}), 0)` })
+    .from(purchases)
+    .where(startDate ? sql`${purchases.createdAt} >= ${startDate}` : undefined)
+    .get();
+
+  // Total enrollments across all courses
+  const enrollmentResult = db
+    .select({ count: sql<number>`count(*)` })
+    .from(enrollments)
+    .where(
+      startDate ? sql`${enrollments.enrolledAt} >= ${startDate}` : undefined
+    )
+    .get();
+
+  // Top earning course — find the course ID with highest revenue
+  const topCourseResult = db
+    .select({
+      courseId: purchases.courseId,
+      revenue: sql<number>`coalesce(sum(${purchases.pricePaid}), 0)`,
+    })
+    .from(purchases)
+    .where(startDate ? sql`${purchases.createdAt} >= ${startDate}` : undefined)
+    .groupBy(purchases.courseId)
+    .orderBy(sql`sum(${purchases.pricePaid}) desc`)
+    .limit(1)
+    .get();
+
+  let topEarningCourse: { title: string; revenue: number } | null = null;
+  if (topCourseResult && topCourseResult.revenue > 0) {
+    const topCourse = db
+      .select({ title: courses.title })
+      .from(courses)
+      .where(eq(courses.id, topCourseResult.courseId))
+      .get();
+
+    if (topCourse) {
+      topEarningCourse = {
+        title: topCourse.title,
+        revenue: topCourseResult.revenue,
+      };
+    }
+  }
+
+  return {
+    totalRevenue: revenueResult?.total ?? 0,
+    totalEnrollments: enrollmentResult?.count ?? 0,
+    topEarningCourse,
+  };
+}
+
 // ─── Per-Course Breakdown ───
 
 export interface CourseAnalytics {
