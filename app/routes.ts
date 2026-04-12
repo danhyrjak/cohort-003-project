@@ -61,4 +61,8 @@ export default [
     "api/notifications/mark-all-read",
     "routes/api.notifications.mark-all-read.ts"
   ),
+  route(
+    "api/lessons/:lessonId/presence",
+    "routes/api.lessons.$lessonId.presence.ts"
+  ),
 ] satisfies RouteConfig;
