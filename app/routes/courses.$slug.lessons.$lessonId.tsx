@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { usePresence } from "~/hooks/usePresence";
+import { PresenceAvatarStack } from "~/components/presence-avatar-stack";
 import { Link, useFetcher, useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/courses.$slug.lessons.$lessonId";
@@ -694,13 +695,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             {enrolled && currentUserId && (
               <BookmarkButton isBookmarked={isBookmarked} />
             )}
-            {presenceRoster.length > 0 && (
-              <span className="text-sm text-muted-foreground">
-                {presenceRoster.length === 1
-                  ? "1 student viewing"
-                  : `${presenceRoster.length} students viewing`}
-              </span>
-            )}
+            <PresenceAvatarStack roster={presenceRoster} />
           </div>
 
           {/* YouTube Video */}
