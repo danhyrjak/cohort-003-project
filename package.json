@@ -7,7 +7,7 @@
     "reset": "ai-hero-cli reset --branch=live-run-through --upstream=https://github.com/ai-hero-dev/cohort-003-project.git",
     "pull": "ai-hero-cli pull --upstream=https://github.com/ai-hero-dev/cohort-003-project.git",
     "build": "react-router build",
-    "dev": "react-router dev",
+    "dev": "react-router dev --host 0.0.0.0",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc",
     "test": "vitest run",
