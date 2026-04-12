@@ -3,11 +3,16 @@ import type { PresenceUser } from "~/lib/presenceStore";
 
 export function usePresence(lessonId: number, currentUserId: number | null) {
   const [roster, setRoster] = useState<PresenceUser[]>([]);
+  const [connected, setConnected] = useState(false);
 
   useEffect(() => {
     if (!currentUserId) return;
 
     const es = new EventSource(`/api/lessons/${lessonId}/presence`);
+
+    es.onopen = () => {
+      setConnected(true);
+    };
 
     es.onmessage = (event) => {
       try {
@@ -19,10 +24,15 @@ export function usePresence(lessonId: number, currentUserId: number | null) {
       }
     };
 
+    es.onerror = () => {
+      setConnected(false);
+    };
+
     return () => {
       es.close();
+      setConnected(false);
     };
   }, [lessonId, currentUserId]);
 
-  return { roster };
+  return { roster, connected };
 }

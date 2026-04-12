@@ -567,7 +567,10 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
   const quizFetcher = useFetcher({ key: `quiz-${lesson.id}` });
   const navigate = useNavigate();
 
-  const { roster: presenceRoster } = usePresence(lesson.id, currentUserId);
+  const { roster: presenceRoster, connected: presenceConnected } = usePresence(
+    lesson.id,
+    currentUserId
+  );
 
   const isMarking =
     fetcher.state !== "idle" &&
@@ -695,7 +698,10 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
             {enrolled && currentUserId && (
               <BookmarkButton isBookmarked={isBookmarked} />
             )}
-            <PresenceAvatarStack roster={presenceRoster} />
+            <PresenceAvatarStack
+              roster={presenceRoster}
+              connected={presenceConnected}
+            />
           </div>
 
           {/* YouTube Video */}

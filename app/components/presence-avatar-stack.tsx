@@ -3,7 +3,13 @@ import { presenceColor } from "~/lib/presenceColor";
 
 const MAX_VISIBLE = 5;
 
-export function PresenceAvatarStack({ roster }: { roster: PresenceUser[] }) {
+export function PresenceAvatarStack({
+  roster,
+  connected,
+}: {
+  roster: PresenceUser[];
+  connected: boolean;
+}) {
   if (roster.length === 0) return null;
 
   const visible = roster.slice(0, MAX_VISIBLE);
@@ -14,7 +20,10 @@ export function PresenceAvatarStack({ roster }: { roster: PresenceUser[] }) {
       : `${roster.length} students viewing`;
 
   return (
-    <div className="flex items-center gap-1" title={label}>
+    <div
+      className={`flex items-center gap-1${connected ? "" : " opacity-50"}`}
+      title={label}
+    >
       <div className="flex -space-x-2">
         {visible.map((user) => (
           <Avatar key={user.id} user={user} />
