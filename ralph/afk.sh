@@ -20,7 +20,7 @@ for ((i=1; i<=$1; i++)); do
   issues=$(gh issue list --state open --json number,title,body,comments)
   prompt=$(cat ralph/prompt.md)
 
-  docker sandbox run claude . -- \
+  sbx run claude . -- \
     --verbose \
     --print \
     --output-format stream-json \
