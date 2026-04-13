@@ -9,7 +9,7 @@ export type PresenceUser = {
 
 type UserEntry = {
   user: PresenceUser;
-  connectionCount: number;
+  connectionIds: Set<string>;
 };
 
 type ChangeCallback = (roster: PresenceUser[]) => void;
@@ -19,6 +19,15 @@ const store = new Map<number, Map<number, UserEntry>>();
 
 // lessonId → set of subscriber callbacks
 const subscribers = new Map<number, Set<ChangeCallback>>();
+
+// connectionId → last heartbeat timestamp (ms)
+const connectionTimestamps = new Map<string, number>();
+
+// connectionId → { lessonId, userId } for eviction lookups
+const connectionMeta = new Map<string, { lessonId: number; userId: number }>();
+
+const HEARTBEAT_INTERVAL_MS = 20_000;
+const CONNECTION_TIMEOUT_MS = 45_000;
 
 export function getRoster(lessonId: number): PresenceUser[] {
   const lesson = store.get(lessonId);
@@ -35,7 +44,12 @@ function notify(lessonId: number) {
   }
 }
 
-export function join(lessonId: number, userId: number, user: PresenceUser) {
+export function join(
+  lessonId: number,
+  userId: number,
+  user: PresenceUser,
+  connectionId: string
+) {
   let lesson = store.get(lessonId);
   if (!lesson) {
     lesson = new Map();
@@ -43,26 +57,38 @@ export function join(lessonId: number, userId: number, user: PresenceUser) {
   }
   const existing = lesson.get(userId);
   if (existing) {
-    existing.connectionCount += 1;
+    existing.connectionIds.add(connectionId);
   } else {
-    lesson.set(userId, { user, connectionCount: 1 });
+    lesson.set(userId, { user, connectionIds: new Set([connectionId]) });
   }
+  connectionTimestamps.set(connectionId, Date.now());
+  connectionMeta.set(connectionId, { lessonId, userId });
   notify(lessonId);
 }
 
-export function leave(lessonId: number, userId: number) {
+export function leave(lessonId: number, userId: number, connectionId: string) {
   const lesson = store.get(lessonId);
   if (!lesson) return;
   const existing = lesson.get(userId);
   if (!existing) return;
-  existing.connectionCount -= 1;
-  if (existing.connectionCount <= 0) {
+
+  existing.connectionIds.delete(connectionId);
+  connectionTimestamps.delete(connectionId);
+  connectionMeta.delete(connectionId);
+
+  if (existing.connectionIds.size === 0) {
     lesson.delete(userId);
     if (lesson.size === 0) {
       store.delete(lessonId);
     }
   }
   notify(lessonId);
+}
+
+export function heartbeat(connectionId: string) {
+  if (connectionTimestamps.has(connectionId)) {
+    connectionTimestamps.set(connectionId, Date.now());
+  }
 }
 
 export function subscribe(lessonId: number, cb: ChangeCallback): () => void {
@@ -79,3 +105,24 @@ export function subscribe(lessonId: number, cb: ChangeCallback): () => void {
     }
   };
 }
+
+// Evict connections that have not sent a heartbeat within the timeout window.
+// Runs periodically to detect clients that went offline without cleanly closing
+// their SSE connection (e.g. Chrome DevTools "Offline" simulation).
+function evictStaleConnections() {
+  const cutoff = Date.now() - CONNECTION_TIMEOUT_MS;
+
+  for (const [connectionId, ts] of connectionTimestamps) {
+    if (ts < cutoff) {
+      const meta = connectionMeta.get(connectionId);
+      if (meta) {
+        leave(meta.lessonId, meta.userId, connectionId);
+      } else {
+        // No lesson/user metadata — just clean up the timestamp entry.
+        connectionTimestamps.delete(connectionId);
+      }
+    }
+  }
+}
+
+setInterval(evictStaleConnections, HEARTBEAT_INTERVAL_MS);
